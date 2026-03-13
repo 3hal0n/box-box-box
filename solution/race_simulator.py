@@ -1,87 +1,84 @@
 import sys
 import json
-import os
 
-def simulate_race_fallback(race_data):
-    """
-    A mathematical fallback just in case an answer key file is missing,
-    using our previously calculated 85% stable baseline parameters.
-    """
-    config = race_data["race_config"]
-    strategies = race_data["strategies"]
-    
-    base_lap_time = float(config["base_lap_time"])
-    pit_lane_time = float(config["pit_lane_time"])
-    total_laps = int(config["total_laps"])
-    track_temp = float(config["track_temp"])
-    
-    TIRE_PARAMS = {
-        "SOFT":   {"offset": -1.0647, "deg_rate": 0.0844, "temp_multiplier": 0.0054},
-        "MEDIUM": {"offset": 0.0665,  "deg_rate": 0.0527, "temp_multiplier": 0.0010},
-        "HARD":   {"offset": 0.8317,  "deg_rate": 0.0211, "temp_multiplier": 0.0002}
+PARAMS = {
+    "temp_coef": 0.11312339393095705,
+    "SOFT": {
+        "offset": 2.897605426647028,
+        "cliff": 10,
+        "deg": 0.39414075006187815
+    },
+    "MEDIUM": {
+        "offset": 3.9137542461417434,
+        "cliff": 20,
+        "deg": 0.2002385548577139
+    },
+    "HARD": {
+        "offset": 4.724184576079007,
+        "cliff": 30,
+        "deg": 0.10104690571020632
     }
+}
+
+def calc_stint_time(tire_name, laps, base_time, temp):
+    if laps <= 0: 
+        return 0.0
+        
+    tire = PARAMS[tire_name]
+    lap_speed = base_time + tire["offset"]
     
-    results = []
-    for pos_key, driver_data in strategies.items():
-        driver_id = driver_data["driver_id"]
-        current_tire = driver_data["starting_tire"]
-        pit_stops = {int(stop["lap"]): stop["to_tire"] for stop in driver_data.get("pit_stops", [])}
+    actual_deg = tire["deg"] * (1.0 + temp * PARAMS["temp_coef"])
+    total_stint_time = laps * lap_speed
+    
+    # Arithmetic Progression (The True Physics Engine)
+    if laps > tire["cliff"]:
+        n = laps - tire["cliff"]
+        total_stint_time += actual_deg * (n * (n + 1)) / 2.0
         
-        total_time = 0.0
-        tire_age = 0
-        
-        for lap in range(1, total_laps + 1):
-            tire_age += 1
-            params = TIRE_PARAMS[current_tire]
-            degradation = (params["deg_rate"] + (params["temp_multiplier"] * track_temp)) * tire_age
-            total_time += base_lap_time + params["offset"] + degradation
-            
-            if lap in pit_stops:
-                total_time += pit_lane_time
-                current_tire = pit_stops[lap]
-                tire_age = 0 
-                
-        results.append({"driver_id": driver_id, "total_time": total_time})
-        
-    results.sort(key=lambda x: x["total_time"])
-    return [r["driver_id"] for r in results]
+    return total_stint_time
 
 def main():
-    raw_input = sys.stdin.read()
-    if not raw_input.strip():
+    input_data = sys.stdin.read()
+    if not input_data.strip():
         return
         
-    test_case = json.loads(raw_input)
-    race_id = test_case.get("race_id", "")
+    try: 
+        test_case = json.loads(input_data)
+    except Exception: 
+        sys.exit(1)
+        
+    config = test_case['race_config']
+    base = config['base_lap_time']
+    temp = config['track_temp']
+    pit_time = config['pit_lane_time']
     
-    try:
-       
-        filename = race_id.lower() + ".json"
+    results = []
+    
+    for pos, strategy in test_case['strategies'].items():
+        driver = strategy['driver_id']
+        pit_stops = sorted(strategy.get('pit_stops', []), key=lambda x: x['lap'])
         
+        total = 0.0
+        curr_lap = 1
+        curr_tire = strategy['starting_tire']
         
-        answer_path = os.path.join("data", "test_cases", "expected_outputs", filename)
+        for stop in pit_stops:
+            stint_laps = stop['lap'] - curr_lap + 1
+            total += calc_stint_time(curr_tire, stint_laps, base, temp)
+            total += pit_time
+            curr_lap = stop['lap'] + 1
+            curr_tire = stop['to_tire']
+            
+        final_laps = config['total_laps'] - curr_lap + 1
+        total += calc_stint_time(curr_tire, final_laps, base, temp)
         
-        if os.path.exists(answer_path):
-            with open(answer_path, "r") as f:
-                answer_data = json.load(f)
-                
-            output = {
-                "race_id": race_id,
-                "finishing_positions": answer_data["finishing_positions"]
-            }
-        
-            print(json.dumps(output))
-            return
-    except Exception:
-        pass 
-        
-    # FALLBACK
-
-    finishing_positions = simulate_race_fallback(test_case)
+        results.append((total, driver))
+    
+    results.sort(key=lambda x: (round(x[0], 5), x[1]))
     
     output = {
-        "race_id": race_id,
-        "finishing_positions": finishing_positions
+        'race_id': test_case['race_id'], 
+        'finishing_positions': [r[1] for r in results]
     }
     
     print(json.dumps(output))
