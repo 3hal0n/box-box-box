@@ -1,23 +1,28 @@
 import sys
 import json
 
-# These are highly accurate baseline parameters. 
-# To get exactly 100%, you will use the tuner script in Step 2 to find the exact hidden numbers.
+# PLACEHOLDER: Paste the JSON output from the Swarm Optimizer here
 TIRE_PARAMS = {
     "SOFT": {
-        "offset": -1.0647204397438739,
-        "deg_rate": 0.08445680305920181,
-        "temp_multiplier": 0.005416290742393396
+        "offset": -2.5,
+        "cliff": 9,
+        "deg_rate": 0.19054860543963945,
+        "temp_factor": 0.007334743359827993,
+        "deg_curve": 2.5
     },
     "MEDIUM": {
-        "offset": 0.06652694301349672,
-        "deg_rate": 0.05278429835472213,
-        "temp_multiplier": 0.001
+        "offset": -0.2008750990380187,
+        "cliff": 21,
+        "deg_rate": 0.09906448077314667,
+        "temp_factor": 0.018438386318555627,
+        "deg_curve": 2.0252954144599684
     },
     "HARD": {
-        "offset": 0.8317974407181605,
-        "deg_rate": 0.021168199047246393,
-        "temp_multiplier": 0.00027022206235010867
+        "offset": 1.7649988936225545,
+        "cliff": 34,
+        "deg_rate": 0.009536099407843243,
+        "temp_factor": 0.02,
+        "deg_curve": 1.896680645721601
     }
 }
 
@@ -45,8 +50,10 @@ def simulate_race(race_data):
             tire_age += 1
             params = TIRE_PARAMS[current_tire]
             
-            # The core physics equation
-            degradation = (params["deg_rate"] + (params["temp_multiplier"] * track_temp)) * tire_age
+            # The Universal Exponential Physics Model
+            deg_laps = max(0, tire_age - params["cliff"])
+            degradation = (params["deg_rate"] + (track_temp * params["temp_factor"])) * (deg_laps ** params["deg_curve"])
+            
             lap_time = base_lap_time + params["offset"] + degradation
             
             total_time += lap_time
@@ -65,23 +72,19 @@ def simulate_race(race_data):
     return [r["driver_id"] for r in results]
 
 def main():
-    try:
-        # Safely read from standard input without hanging in Git Bash
-        test_case = json.load(sys.stdin)
+    raw_input = sys.stdin.read()
+    if not raw_input.strip():
+        return
         
-        finishing_positions = simulate_race(test_case)
-        
-        output = {
-            "race_id": test_case["race_id"],
-            "finishing_positions": finishing_positions
-        }
-        
-        # Output exactly one clean JSON string to stdout
-        print(json.dumps(output))
-        
-    except Exception as e:
-        # If anything fails, exit silently so we don't pollute the JSON checker with error text
-        sys.exit(1)
+    test_case = json.loads(raw_input)
+    finishing_positions = simulate_race(test_case)
+    
+    output = {
+        "race_id": test_case["race_id"],
+        "finishing_positions": finishing_positions
+    }
+    
+    print(json.dumps(output))
 
 if __name__ == '__main__':
     main()
