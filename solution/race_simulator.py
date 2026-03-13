@@ -4,9 +4,21 @@ import json
 # These are highly accurate baseline parameters. 
 # To get exactly 100%, you will use the tuner script in Step 2 to find the exact hidden numbers.
 TIRE_PARAMS = {
-    "SOFT":   {"offset": -1.2, "deg_rate": 0.085, "temp_multiplier": 0.002},
-    "MEDIUM": {"offset": 0.0,  "deg_rate": 0.050, "temp_multiplier": 0.001},
-    "HARD":   {"offset": 1.0,  "deg_rate": 0.025, "temp_multiplier": 0.0005}
+    "SOFT": {
+        "offset": -1.0647204397438739,
+        "deg_rate": 0.08445680305920181,
+        "temp_multiplier": 0.005416290742393396
+    },
+    "MEDIUM": {
+        "offset": 0.06652694301349672,
+        "deg_rate": 0.05278429835472213,
+        "temp_multiplier": 0.001
+    },
+    "HARD": {
+        "offset": 0.8317974407181605,
+        "deg_rate": 0.021168199047246393,
+        "temp_multiplier": 0.00027022206235010867
+    }
 }
 
 def simulate_race(race_data):
