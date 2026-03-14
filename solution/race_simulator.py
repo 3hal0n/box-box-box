@@ -1,23 +1,15 @@
-import sys
 import json
+import sys
+import math
 
+# ---------------------------------------------------------
+# CURRENT BEST PHYSICS PARAMETERS (39% Baseline)
+# ---------------------------------------------------------
 PARAMS = {
-    "temp_coef": 0.11312339393095705,
-    "SOFT": {
-        "offset": 2.897605426647028,
-        "cliff": 10,
-        "deg": 0.39414075006187815
-    },
-    "MEDIUM": {
-        "offset": 3.9137542461417434,
-        "cliff": 20,
-        "deg": 0.2002385548577139
-    },
-    "HARD": {
-        "offset": 4.724184576079007,
-        "cliff": 30,
-        "deg": 0.10104690571020632
-    }
+      'SOFT':   {'offset': 2.959679, 'cliff': 10, 'deg': 0.393913, 'warmup': 0.0},
+      'MEDIUM': {'offset': 3.928766, 'cliff': 20, 'deg': 0.200049, 'warmup': 0.0},
+      'HARD':   {'offset': 4.726468, 'cliff': 30, 'deg': 0.101575, 'warmup': 0.0},
+      'temp_coef': 0.112732
 }
 
 def calc_stint_time(tire_name, laps, base_time, temp):
@@ -26,14 +18,26 @@ def calc_stint_time(tire_name, laps, base_time, temp):
         
     tire = PARAMS[tire_name]
     lap_speed = base_time + tire["offset"]
-    
     actual_deg = tire["deg"] * (1.0 + temp * PARAMS["temp_coef"])
-    total_stint_time = laps * lap_speed
     
-    # Arithmetic Progression (The True Physics Engine)
-    if laps > tire["cliff"]:
-        n = laps - tire["cliff"]
-        total_stint_time += actual_deg * (n * (n + 1)) / 2.0
+    total_stint_time = 0.0
+    
+    # Calculate lap-by-lap to simulate F1 Timing Systems exactly
+    for lap_of_stint in range(1, laps + 1):
+        current_lap_time = lap_speed
+        
+        # 1. Warm-up penalty (Only applies to the 1st lap on new tires)
+        if lap_of_stint == 1:
+            current_lap_time += tire['warmup']
+            
+        # 2. Degradation penalty (Only applies after the cliff)
+        if lap_of_stint > tire["cliff"]:
+            n = lap_of_stint - tire["cliff"]
+            current_lap_time += (actual_deg * n)
+            
+        # 3. Lap-by-Lap F1 Truncation (Rounds to 3 decimal places per lap)
+        # Using round(..., 3) simulates how an F1 timing beam records the time
+        total_stint_time += round(current_lap_time, 3)
         
     return total_stint_time
 
@@ -74,7 +78,9 @@ def main():
         
         results.append((total, driver))
     
-    results.sort(key=lambda x: (round(x[0], 5), x[1]))
+    # Sort strictly by total time. 
+    # Because we already rounded lap-by-lap, we use the exact sum here.
+    results.sort(key=lambda x: (x[0], x[1]))
     
     output = {
         'race_id': test_case['race_id'], 

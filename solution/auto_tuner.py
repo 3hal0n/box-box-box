@@ -1,9 +1,8 @@
 import sys
 import json
 import os
-import random
-import copy
-import math
+import numpy as np
+from scipy.optimize import differential_evolution
 
 def load_final_exam():
     races = []
@@ -25,6 +24,15 @@ def load_final_exam():
             races.append(in_data)
     return races
 
+def vec_to_params(v):
+    # Maps the Scipy flat vector back to our 38% parameter dictionary
+    return {
+        "temp_coef": v[0],
+        "SOFT":   {"offset": v[1], "deg": v[2], "cliff": round(v[3])},
+        "MEDIUM": {"offset": v[4], "deg": v[5], "cliff": round(v[6])},
+        "HARD":   {"offset": v[7], "deg": v[8], "cliff": round(v[9])}
+    }
+
 def calc_stint_time(tire_name, laps, base_time, temp, params):
     if laps <= 0: 
         return 0.0
@@ -32,11 +40,10 @@ def calc_stint_time(tire_name, laps, base_time, temp, params):
     tire = params[tire_name]
     lap_speed = base_time + tire["offset"]
     
-    # Multiplicative temperature scaling
     actual_deg = tire["deg"] * (1.0 + temp * params["temp_coef"])
     total_stint_time = laps * lap_speed
     
-    # Arithmetic Progression Degradation (The Secret Formula)
+    # Arithmetic Progression (The True Physics Engine)
     if laps > tire["cliff"]:
         n = laps - tire["cliff"]
         total_stint_time += actual_deg * (n * (n + 1)) / 2.0
@@ -72,76 +79,67 @@ def simulate(race, params):
         
     return times
 
-def score_params(params, races):
-    perfect_races = 0
-    correct_pairs = 0
+def loss(v, races):
+    params = vec_to_params(v)
+    wrong_pairs = 0
     total_pairs = 0
     
     for race in races:
         times = simulate(race, params)
         expected = race["expected"]
         
-        race_correct = 0
-        race_total = 0
         for i in range(len(expected)):
             for j in range(i + 1, len(expected)):
-                race_total += 1
-                if times[expected[i]] < times[expected[j]]:
-                    race_correct += 1
+                total_pairs += 1
+                # If Driver i should beat Driver j, but their time is higher/equal, penalize
+                if times[expected[i]] >= times[expected[j]]:
+                    wrong_pairs += 1
                     
-        correct_pairs += race_correct
-        total_pairs += race_total
-        if race_correct == race_total:
-            perfect_races += 1
-            
-    return perfect_races, (correct_pairs / total_pairs)
+    # Scipy attempts to push this error fraction to 0.0
+    return wrong_pairs / total_pairs
 
 def main():
     races = load_final_exam()
-    print("Initializing Legitimate Arithmetic Tuner...")
-    
-    # Starting from the 37% Baseline numbers
-    current_params = {
-        "temp_coef": 0.1127,
-        "SOFT":   {"offset": 2.949, "cliff": 10, "deg": 0.393},
-        "MEDIUM": {"offset": 3.928, "cliff": 20, "deg": 0.200},
-        "HARD":   {"offset": 4.726, "cliff": 30, "deg": 0.101}
-    }
-    
-    best_perfects, best_pairwise = score_params(current_params, races)
-    print(f"Starting Baseline: {best_perfects}/100 Perfect | Pairwise: {best_pairwise*100:.2f}%")
-    
-    for i in range(25000):
-        test_params = copy.deepcopy(current_params)
-        tire = random.choice(["SOFT", "MEDIUM", "HARD"])
-        key = random.choice(["offset", "cliff", "deg", "temp_coef"])
+    if not races:
+        print("Error: Could not load test cases.")
+        return
         
-        if key == "temp_coef":
-            test_params[key] = max(0.0, test_params[key] + random.uniform(-0.005, 0.005))
-        elif key == "cliff":
-            test_params[tire][key] += random.choice([-1, 1])
-            test_params[tire][key] = max(1, test_params[tire][key])
-        elif key == "offset":
-            test_params[tire][key] += random.uniform(-0.05, 0.05)
-        elif key == "deg":
-            test_params[tire][key] = max(0.001, test_params[tire][key] + random.uniform(-0.005, 0.005))
-            
-        perfects, pairwise = score_params(test_params, races)
-        
-        # Accept if strictly better
-        if perfects > best_perfects or (perfects == best_perfects and pairwise > best_pairwise):
-            current_params = test_params
-            best_perfects = perfects
-            best_pairwise = pairwise
-            print(f"Iteration {i} | Perfect Races: {best_perfects}/100 | Pairwise: {best_pairwise*100:.4f}%")
-            
-            if best_perfects == 100:
-                print("\n🎉 100% LEGAL MATH ACHIEVED! 🎉")
-                break
+    print("Firing up Scipy Differential Evolution...")
+    
+    # 10 Dimensions bounded tightly around your successful 38% model
+    bounds = [
+        (0.08, 0.15),      # temp_coef
+        (2.0, 4.0),        # SOFT offset
+        (0.2, 0.5),        # SOFT deg
+        (5, 15),           # SOFT cliff
+        (3.0, 5.0),        # MEDIUM offset
+        (0.1, 0.3),        # MEDIUM deg
+        (15, 25),          # MEDIUM cliff
+        (4.0, 6.0),        # HARD offset
+        (0.05, 0.2),       # HARD deg
+        (25, 35)           # HARD cliff
+    ]
+    
+    # Let scipy do the heavy lifting
+    result = differential_evolution(
+        loss, 
+        bounds, 
+        args=(races,),
+        maxiter=1000, 
+        popsize=20, 
+        mutation=(0.5, 1.5), 
+        recombination=0.9,
+        seed=42, 
+        disp=True,     # Will print its own internal iteration metrics
+        workers=-1     # Parallel processing across all CPU cores
+    )
 
     print("\n" + "="*50)
-    print("FINISHED! Paste this into your race_simulator.py:\n")
-    print(json.dumps(current_params, indent=4))
+    print("OPTIMIZATION FINISHED!")
+    print(f"Final Pairwise Error Rate: {result.fun:.6f}")
+    print("Paste this into your race_simulator.py PARAMS block:\n")
+    final_params = vec_to_params(result.x)
+    print(json.dumps(final_params, indent=4))
     print("="*50)
 
 if __name__ == '__main__':
