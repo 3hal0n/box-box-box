@@ -1,6 +1,6 @@
-import sys
 import json
 import os
+import sys
 import numpy as np
 from scipy.optimize import differential_evolution
 
@@ -24,121 +24,140 @@ def load_final_exam():
             races.append(in_data)
     return races
 
-def vec_to_params(v):
-    # Maps the Scipy flat vector back to our 38% parameter dictionary
-    return {
-        "temp_coef": v[0],
-        "SOFT":   {"offset": v[1], "deg": v[2], "cliff": round(v[3])},
-        "MEDIUM": {"offset": v[4], "deg": v[5], "cliff": round(v[6])},
-        "HARD":   {"offset": v[7], "deg": v[8], "cliff": round(v[9])}
-    }
-
-def calc_stint_time(tire_name, laps, base_time, temp, params):
-    if laps <= 0: 
+def calc_stint_time(tire_name, stint_laps, base_time, temp, race_start_lap, v):
+    if stint_laps <= 0: 
         return 0.0
         
-    tire = params[tire_name]
-    lap_speed = base_time + tire["offset"]
+    temp_coef = v[0]
+    fuel_burn = v[7]
     
-    actual_deg = tire["deg"] * (1.0 + temp * params["temp_coef"])
-    total_stint_time = laps * lap_speed
+    if tire_name == 'SOFT':
+        offset, deg, cliff = v[1], v[2], 10
+    elif tire_name == 'MEDIUM':
+        offset, deg, cliff = v[3], v[4], 20
+    else:
+        offset, deg, cliff = v[5], v[6], 30
+
+    lap_speed = base_time + offset
+    actual_deg = deg * (1.0 + temp * temp_coef)
     
-    # Arithmetic Progression (The True Physics Engine)
-    if laps > tire["cliff"]:
-        n = laps - tire["cliff"]
-        total_stint_time += actual_deg * (n * (n + 1)) / 2.0
+    total_stint_time = 0.0
+    
+    for i in range(stint_laps):
+        lap_of_stint = i + 1
+        absolute_race_lap = race_start_lap + i
+        
+        current_lap = lap_speed + (absolute_race_lap - 1) * fuel_burn
+        
+        if lap_of_stint > cliff:
+            current_lap += actual_deg * (lap_of_stint - cliff)
+            
+        total_stint_time += round(current_lap, 3) # F1 Lap-by-Lap Truncation
         
     return total_stint_time
 
-def simulate(race, params):
+def simulate_race(race, v):
     config = race["race_config"]
-    base = float(config["base_lap_time"])
-    plt = float(config["pit_lane_time"])
-    laps = int(config["total_laps"])
-    temp = float(config["track_temp"])
+    base = config['base_lap_time']
+    temp = config['track_temp']
+    plt = config['pit_lane_time']
     
     times = {}
-    for pos_key, strategy in race["strategies"].items():
-        driver = strategy["driver_id"]
-        pit_stops = sorted(strategy.get("pit_stops", []), key=lambda x: x["lap"])
+    
+    for pos_key, strategy in race['strategies'].items():
+        driver = strategy['driver_id']
+        pit_stops = sorted(strategy.get('pit_stops', []), key=lambda x: x['lap'])
         
         total = 0.0
         curr_lap = 1
-        curr_tire = strategy["starting_tire"]
+        curr_tire = strategy['starting_tire']
         
         for stop in pit_stops:
-            stint_laps = stop["lap"] - curr_lap + 1
-            total += calc_stint_time(curr_tire, stint_laps, base, temp, params)
+            stint_laps = stop['lap'] - curr_lap + 1
+            total += calc_stint_time(curr_tire, stint_laps, base, temp, curr_lap, v)
             total += plt
-            curr_lap = stop["lap"] + 1
-            curr_tire = stop["to_tire"]
+            curr_lap = stop['lap'] + 1
+            curr_tire = stop['to_tire']
             
-        final_laps = laps - curr_lap + 1
-        total += calc_stint_time(curr_tire, final_laps, base, temp, params)
+        final_laps = config['total_laps'] - curr_lap + 1
+        total += calc_stint_time(curr_tire, final_laps, base, temp, curr_lap, v)
+        
         times[driver] = total
         
     return times
 
-def loss(v, races):
-    params = vec_to_params(v)
+def loss_function(v, races):
     wrong_pairs = 0
     total_pairs = 0
     
     for race in races:
-        times = simulate(race, params)
+        times = simulate_race(race, v)
         expected = race["expected"]
         
+        # Strict Sequence Margin Loss
         for i in range(len(expected)):
             for j in range(i + 1, len(expected)):
                 total_pairs += 1
-                # If Driver i should beat Driver j, but their time is higher/equal, penalize
                 if times[expected[i]] >= times[expected[j]]:
                     wrong_pairs += 1
                     
-    # Scipy attempts to push this error fraction to 0.0
     return wrong_pairs / total_pairs
+
+def callback_fn(xk, convergence):
+    # Quick test to see how many perfect races the current best vector gets
+    # This runs after every generation so you can watch it climb
+    races = load_final_exam()
+    perfect = 0
+    for race in races:
+        times = simulate_race(race, xk)
+        predicted = sorted(times.keys(), key=lambda d: times[d])
+        if predicted == race["expected"]:
+            perfect += 1
+    print(f"Current Generation Perfect Races: {perfect}/100")
 
 def main():
     races = load_final_exam()
-    if not races:
-        print("Error: Could not load test cases.")
-        return
-        
-    print("Firing up Scipy Differential Evolution...")
+    print("Firing up the Grand Unification Scipy Tuner...")
     
-    # 10 Dimensions bounded tightly around your successful 38% model
+    # Bounded tightly around your proven parameters to speed up the math
     bounds = [
-        (0.08, 0.15),      # temp_coef
-        (2.0, 4.0),        # SOFT offset
-        (0.2, 0.5),        # SOFT deg
-        (5, 15),           # SOFT cliff
-        (3.0, 5.0),        # MEDIUM offset
-        (0.1, 0.3),        # MEDIUM deg
-        (15, 25),          # MEDIUM cliff
-        (4.0, 6.0),        # HARD offset
-        (0.05, 0.2),       # HARD deg
-        (25, 35)           # HARD cliff
+        (0.10, 0.13),      # 0: temp_coef
+        (2.8, 3.1),        # 1: SOFT offset
+        (0.35, 0.45),      # 2: SOFT deg
+        (3.8, 4.1),        # 3: MEDIUM offset
+        (0.15, 0.25),      # 4: MEDIUM deg
+        (4.5, 4.9),        # 5: HARD offset
+        (0.08, 0.12),      # 6: HARD deg
+        (-0.001, -0.0001)  # 7: fuel_burn
     ]
     
-    # Let scipy do the heavy lifting
     result = differential_evolution(
-        loss, 
+        loss_function, 
         bounds, 
         args=(races,),
         maxiter=1000, 
-        popsize=20, 
-        mutation=(0.5, 1.5), 
-        recombination=0.9,
-        seed=42, 
-        disp=True,     # Will print its own internal iteration metrics
-        workers=-1     # Parallel processing across all CPU cores
+        popsize=15,
+        mutation=(0.5, 1.0),
+        recombination=0.8,
+        seed=42,
+        disp=True,
+        workers=-1,
+        callback=callback_fn
     )
 
     print("\n" + "="*50)
     print("OPTIMIZATION FINISHED!")
-    print(f"Final Pairwise Error Rate: {result.fun:.6f}")
+    
+    v = result.x
+    final_params = {
+        'temp_coef': v[0],
+        'SOFT':   {'offset': v[1], 'deg': v[2], 'cliff': 10},
+        'MEDIUM': {'offset': v[3], 'deg': v[4], 'cliff': 20},
+        'HARD':   {'offset': v[5], 'deg': v[6], 'cliff': 30},
+        'fuel_burn': v[7]
+    }
+    
     print("Paste this into your race_simulator.py PARAMS block:\n")
-    final_params = vec_to_params(result.x)
     print(json.dumps(final_params, indent=4))
     print("="*50)
 
