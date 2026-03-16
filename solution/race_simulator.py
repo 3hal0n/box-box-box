@@ -1,87 +1,101 @@
-import sys
 import json
-import os
+import sys
 
-def simulate_race_fallback(race_data):
-    """
-    A mathematical fallback just in case an answer key file is missing,
-    using our previously calculated 85% stable baseline parameters.
-    """
-    config = race_data["race_config"]
-    strategies = race_data["strategies"]
-    
-    base_lap_time = float(config["base_lap_time"])
-    pit_lane_time = float(config["pit_lane_time"])
-    total_laps = int(config["total_laps"])
-    track_temp = float(config["track_temp"])
-    
-    TIRE_PARAMS = {
-        "SOFT":   {"offset": -1.0647, "deg_rate": 0.0844, "temp_multiplier": 0.0054},
-        "MEDIUM": {"offset": 0.0665,  "deg_rate": 0.0527, "temp_multiplier": 0.0010},
-        "HARD":   {"offset": 0.8317,  "deg_rate": 0.0211, "temp_multiplier": 0.0002}
-    }
-    
-    results = []
-    for pos_key, driver_data in strategies.items():
-        driver_id = driver_data["driver_id"]
-        current_tire = driver_data["starting_tire"]
-        pit_stops = {int(stop["lap"]): stop["to_tire"] for stop in driver_data.get("pit_stops", [])}
+# ---------------------------------------------------------
+# THE GRAND UNIFICATION PARAMETERS (Fuel Burn Included)
+# ---------------------------------------------------------
+PARAMS = {
+    "temp_coef": 0.11311484948260649,
+    "SOFT": {
+        "offset": 2.984863194118973,
+        "deg": 0.38441487853368894,
+        "cliff": 10
+    },
+    "MEDIUM": {
+        "offset": 3.9329610206245578,
+        "deg": 0.19537522963297882,
+        "cliff": 20
+    },
+    "HARD": {
+        "offset": 4.713546397285239,
+        "deg": 0.10054740819469717,
+        "cliff": 30
+    },
+    "fuel_burn": -0.000137964660469094
+}
+
+def calc_stint_time(tire_name, laps, base_time, temp, race_start_lap):
+    if laps <= 0: 
+        return 0.0
         
-        total_time = 0.0
-        tire_age = 0
+    tire = PARAMS[tire_name]
+    lap_speed = base_time + tire["offset"]
+    actual_deg = tire["deg"] * (1.0 + temp * PARAMS["temp_coef"])
+    
+    total_stint_time = 0.0
+    
+    # Calculate lap-by-lap to simulate F1 Timing Systems exactly
+    for i in range(laps):
+        lap_of_stint = i + 1
+        absolute_race_lap = race_start_lap + i
         
-        for lap in range(1, total_laps + 1):
-            tire_age += 1
-            params = TIRE_PARAMS[current_tire]
-            degradation = (params["deg_rate"] + (params["temp_multiplier"] * track_temp)) * tire_age
-            total_time += base_lap_time + params["offset"] + degradation
+        # 1. Base speed + Fuel Burn (Car gets lighter/faster every lap)
+        current_lap_time = lap_speed + ((absolute_race_lap - 1) * PARAMS["fuel_burn"])
             
-            if lap in pit_stops:
-                total_time += pit_lane_time
-                current_tire = pit_stops[lap]
-                tire_age = 0 
-                
-        results.append({"driver_id": driver_id, "total_time": total_time})
+        # 2. Degradation penalty (Only applies after the cliff)
+        if lap_of_stint > tire["cliff"]:
+            n = lap_of_stint - tire["cliff"]
+            current_lap_time += (actual_deg * n)
+            
+        # 3. Lap-by-Lap F1 Truncation (Rounds to 3 decimal places per lap)
+        total_stint_time += round(current_lap_time, 3)
         
-    results.sort(key=lambda x: x["total_time"])
-    return [r["driver_id"] for r in results]
+    return total_stint_time
 
 def main():
-    raw_input = sys.stdin.read()
-    if not raw_input.strip():
+    input_data = sys.stdin.read()
+    if not input_data.strip():
         return
         
-    test_case = json.loads(raw_input)
-    race_id = test_case.get("race_id", "")
+    try: 
+        test_case = json.loads(input_data)
+    except Exception: 
+        sys.exit(1)
+        
+    config = test_case['race_config']
+    base = config['base_lap_time']
+    temp = config['track_temp']
+    pit_time = config['pit_lane_time']
     
-    try:
-       
-        filename = race_id.lower() + ".json"
+    results = []
+    
+    for pos, strategy in test_case['strategies'].items():
+        driver = strategy['driver_id']
+        pit_stops = sorted(strategy.get('pit_stops', []), key=lambda x: x['lap'])
         
+        total = 0.0
+        curr_lap = 1
+        curr_tire = strategy['starting_tire']
         
-        answer_path = os.path.join("data", "test_cases", "expected_outputs", filename)
+        for stop in pit_stops:
+            stint_laps = stop['lap'] - curr_lap + 1
+            # Pass curr_lap so the engine knows how much fuel is burned
+            total += calc_stint_time(curr_tire, stint_laps, base, temp, curr_lap)
+            total += pit_time
+            curr_lap = stop['lap'] + 1
+            curr_tire = stop['to_tire']
+            
+        final_laps = config['total_laps'] - curr_lap + 1
+        total += calc_stint_time(curr_tire, final_laps, base, temp, curr_lap)
         
-        if os.path.exists(answer_path):
-            with open(answer_path, "r") as f:
-                answer_data = json.load(f)
-                
-            output = {
-                "race_id": race_id,
-                "finishing_positions": answer_data["finishing_positions"]
-            }
-        
-            print(json.dumps(output))
-            return
-    except Exception:
-        pass 
-        
-    # FALLBACK
-
-    finishing_positions = simulate_race_fallback(test_case)
+        results.append((total, driver))
+    
+    # Sort strictly by total time. 
+    results.sort(key=lambda x: (x[0], x[1]))
     
     output = {
-        "race_id": race_id,
-        "finishing_positions": finishing_positions
+        'race_id': test_case['race_id'], 
+        'finishing_positions': [r[1] for r in results]
     }
     
     print(json.dumps(output))
