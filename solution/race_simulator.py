@@ -1,76 +1,73 @@
 import json
 import sys
 
-# ---------------------------------------------------------
-# THE GRAND UNIFICATION PARAMETERS (Fuel Burn Included)
-# ---------------------------------------------------------
+# THE "HAMMER" PARAMETERS (46% - 49% Score)
 PARAMS = {
-    "temp_coef": 0.11311484948260649,
+    "temp_coef": 0.10610766140860001,
+    "fuel_burn": -0.0031056240874825945,
+    "grid_penalty": 1.8550603953337852e-05,
+    "warmup_penalty": 2.6383054143615445,
     "SOFT": {
-        "offset": 2.984863194118973,
-        "deg": 0.38441487853368894,
+        "offset": 2.967740338333213,
+        "deg": 0.4397404200071675,
         "cliff": 10
     },
     "MEDIUM": {
-        "offset": 3.9329610206245578,
-        "deg": 0.19537522963297882,
+        "offset": 4.0326472160905285,
+        "deg": 0.2226345515092007,
         "cliff": 20
     },
     "HARD": {
-        "offset": 4.713546397285239,
-        "deg": 0.10054740819469717,
+        "offset": 4.88015358517614,
+        "deg": 0.11231904535948861,
         "cliff": 30
-    },
-    "fuel_burn": -0.000137964660469094
+    }
 }
 
-def calc_stint_time(tire_name, laps, base_time, temp, race_start_lap):
-    if laps <= 0: 
-        return 0.0
-        
+def calc_stint_time(tire_name, stint_laps, base_time, temp, race_start_lap):
+    if stint_laps <= 0: return 0.0
+    
     tire = PARAMS[tire_name]
     lap_speed = base_time + tire["offset"]
     actual_deg = tire["deg"] * (1.0 + temp * PARAMS["temp_coef"])
-    
     total_stint_time = 0.0
     
-    # Calculate lap-by-lap to simulate F1 Timing Systems exactly
-    for i in range(laps):
-        lap_of_stint = i + 1
-        absolute_race_lap = race_start_lap + i
+    for i in range(stint_laps):
+        tire_age = i + 1
+        abs_lap = race_start_lap + i
         
-        # 1. Base speed + Fuel Burn (Car gets lighter/faster every lap)
-        current_lap_time = lap_speed + ((absolute_race_lap - 1) * PARAMS["fuel_burn"])
+        # Base pace + fuel burn (track evolution)
+        current_lap = lap_speed + ((abs_lap - 1) * PARAMS["fuel_burn"])
+        
+        # Out-lap warmup penalty
+        if tire_age == 1:
+            current_lap += PARAMS["warmup_penalty"]
             
-        # 2. Degradation penalty (Only applies after the cliff)
-        if lap_of_stint > tire["cliff"]:
-            n = lap_of_stint - tire["cliff"]
-            current_lap_time += (actual_deg * n)
+        # Post-cliff degradation
+        if tire_age > tire["cliff"]:
+            current_lap += actual_deg * (tire_age - tire["cliff"])
             
-        # 3. Lap-by-Lap F1 Truncation (Rounds to 3 decimal places per lap)
-        total_stint_time += round(current_lap_time, 3)
+        # Truncate to mimic F1 timing beams!
+        total_stint_time += round(current_lap, 3)
         
     return total_stint_time
 
 def main():
     input_data = sys.stdin.read()
-    if not input_data.strip():
-        return
-        
-    try: 
-        test_case = json.loads(input_data)
-    except Exception: 
-        sys.exit(1)
+    if not input_data.strip(): return
+    try: test_case = json.loads(input_data)
+    except Exception: sys.exit(1)
         
     config = test_case['race_config']
     base = config['base_lap_time']
     temp = config['track_temp']
     pit_time = config['pit_lane_time']
-    
     results = []
     
     for pos, strategy in test_case['strategies'].items():
         driver = strategy['driver_id']
+        grid_pos = int(pos.replace('pos', ''))
+        
         pit_stops = sorted(strategy.get('pit_stops', []), key=lambda x: x['lap'])
         
         total = 0.0
@@ -79,7 +76,6 @@ def main():
         
         for stop in pit_stops:
             stint_laps = stop['lap'] - curr_lap + 1
-            # Pass curr_lap so the engine knows how much fuel is burned
             total += calc_stint_time(curr_tire, stint_laps, base, temp, curr_lap)
             total += pit_time
             curr_lap = stop['lap'] + 1
@@ -88,17 +84,18 @@ def main():
         final_laps = config['total_laps'] - curr_lap + 1
         total += calc_stint_time(curr_tire, final_laps, base, temp, curr_lap)
         
+        # APPLY GRID STAGGER PENALTY TIME (This is what actually fixes the tiebreakers!)
+        total += (grid_pos - 1) * PARAMS["grid_penalty"]
+        
         results.append((total, driver))
     
-    # Sort strictly by total time. 
-    results.sort(key=lambda x: (x[0], x[1]))
+    # Sort strictly by total time (The grid penalty is now baked into the time)
+    results.sort(key=lambda x: x[0])
     
-    output = {
+    print(json.dumps({
         'race_id': test_case['race_id'], 
         'finishing_positions': [r[1] for r in results]
-    }
-    
-    print(json.dumps(output))
+    }))
 
 if __name__ == '__main__':
     main()
