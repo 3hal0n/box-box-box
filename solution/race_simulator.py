@@ -1,11 +1,6 @@
-#!/usr/bin/env python3
 import json
 import sys
-# Tried a One More Physics Based Constant to Achieve 56%
-# Tuning the parameters currently 
-# ==============================================================
-# 60% MILESTONE PARAMETERS (Rank Error: 202)
-# ==============================================================
+
 PARAMS = {
     "SOFT": {
         "offset": 2.958962002059359, 
