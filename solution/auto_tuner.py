@@ -25,27 +25,27 @@ def load_final_exam():
             races.append(in_data)
     return races
 
-def calc_stint_time(tire_name, stint_laps, base_time, temp, race_start_lap, v):
+def calc_stint_time(tire_name, stint_laps, base_time, temp, v):
     if stint_laps <= 0: return 0.0
         
     temp_coef = v[0]
-    fuel_burn = v[1]
     
-    if tire_name == 'SOFT':   offset, deg, exp = v[2], v[3], v[4]
-    elif tire_name == 'MEDIUM': offset, deg, exp = v[5], v[6], v[7]
-    else:                       offset, deg, exp = v[8], v[9], v[10]
+    if tire_name == 'SOFT':   offset, deg, exp = v[1], v[2], v[3]
+    elif tire_name == 'MEDIUM': offset, deg, exp = v[4], v[5], v[6]
+    else:                       offset, deg, exp = v[7], v[8], v[9]
 
     total_stint_time = 0.0
     
     for i in range(stint_laps):
         tire_age = i + 1
-        abs_lap = race_start_lap + i
         
-        # The pure 49% exponential math
+        # Rule 3 & 4: Tire Degradation affected by Track Temp (Exponential Curve)
         current_deg = deg * (1.0 + temp * temp_coef) * (tire_age ** exp)
-        current_lap = base_time + offset + current_deg + ((abs_lap - 1) * fuel_burn)
+        
+        # Rule 1 & 2: Base Lap Time + Tire Compound Performance
+        current_lap = base_time + offset + current_deg
             
-        total_stint_time += round(current_lap, 3) 
+        total_stint_time += current_lap
         
     return total_stint_time
 
@@ -53,7 +53,7 @@ def simulate_race(race, v):
     config = race["race_config"]
     base = config["base_lap_time"]
     temp = config["track_temp"]
-    plt = config["pit_lane_time"]
+    plt = config["pit_lane_time"] # Rule 5: Pit Stops
 
     times = {}
     for pos_key, strategy in race["strategies"].items():
@@ -68,16 +68,16 @@ def simulate_race(race, v):
 
         for stop in pit_stops:
             stint_laps = stop["lap"] - curr_lap + 1
-            total += calc_stint_time(curr_tire, stint_laps, base, temp, curr_lap, v)
-            total += plt
+            total += calc_stint_time(curr_tire, stint_laps, base, temp, v)
+            total += plt # Exactly as the rules state: penalty when entering pit lane
             curr_lap = stop["lap"] + 1
             curr_tire = stop["to_tire"]
 
         final_laps = config["total_laps"] - curr_lap + 1
-        total += calc_stint_time(curr_tire, final_laps, base, temp, curr_lap, v)
+        total += calc_stint_time(curr_tire, final_laps, base, temp, v)
 
-        # Pure Tuple Tiebreaker
-        times[driver] = (total, grid_pos)
+        # Round the final total time to 4 decimals to allow the Grid Tiebreaker to work cleanly
+        times[driver] = (round(total, 4), grid_pos)
 
     return times
 
@@ -116,33 +116,30 @@ def callback_fn(xk, convergence, races):
         
         live_params = {
             "temp_coef": xk[0],
-            "fuel_burn": xk[1],
-            "SOFT":   {"offset": xk[2], "deg": xk[3], "exp": xk[4]},
-            "MEDIUM": {"offset": xk[5], "deg": xk[6], "exp": xk[7]},
-            "HARD":   {"offset": xk[8], "deg": xk[9], "exp": xk[10]}
+            "SOFT":   {"offset": xk[1], "deg": xk[2], "exp": xk[3]},
+            "MEDIUM": {"offset": xk[4], "deg": xk[5], "exp": xk[6]},
+            "HARD":   {"offset": xk[7], "deg": xk[8], "exp": xk[9]}
         }
         print(json.dumps(live_params, indent=4) + "\n")
 
 def main():
     races = load_final_exam()
-    print("Firing up the Pure 49 Recovery Tuner...")
+    print("Firing up the 5-Rule Lightning Tuner...")
 
-    # The EXACT bounds from the run that hit 49
     bounds = [
-        (0.05, 0.20),     # 0: temp_coef
-        (-0.0005, 0.0),   # 1: fuel_burn
+        (0.01, 0.20),     # 0: temp_coef
         
-        (2.0, 3.5),       # 2: SOFT offset
-        (0.001, 0.1),     # 3: SOFT base deg
-        (1.1, 2.5),       # 4: SOFT exponential factor
+        (-3.0, 3.5),      # 1: SOFT offset
+        (0.001, 0.5),     # 2: SOFT base deg
+        (1.0, 2.5),       # 3: SOFT exponential curve
         
-        (3.0, 4.5),       # 5: MEDIUM offset
-        (0.001, 0.1),     # 6: MEDIUM base deg
-        (1.1, 2.5),       # 7: MEDIUM exponential factor
+        (-1.0, 4.5),      # 4: MEDIUM offset
+        (0.001, 0.5),     # 5: MEDIUM base deg
+        (1.0, 2.5),       # 6: MEDIUM exponential curve
         
-        (4.0, 5.5),       # 8: HARD offset
-        (0.0001, 0.1),    # 9: HARD base deg
-        (1.0, 2.0),       # 10: HARD exponential factor
+        (0.0, 5.5),       # 7: HARD offset
+        (0.001, 0.5),     # 8: HARD base deg
+        (1.0, 2.0),       # 9: HARD exponential curve
     ]
 
     try:
@@ -150,8 +147,8 @@ def main():
             loss_function,
             bounds,
             args=(races,),
-            maxiter=1000,
-            popsize=10, 
+            maxiter=500,
+            popsize=5,  # Lightning fast population size
             mutation=(0.5, 1.0),
             recombination=0.8,
             seed=42,
