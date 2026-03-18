@@ -3,7 +3,6 @@ import os
 import sys
 from scipy.optimize import differential_evolution
 
-# Global variable to track our high score so we can print live updates
 BEST_SCORE = 0
 
 def load_final_exam():
@@ -31,7 +30,7 @@ def calc_stint_time(tire_name, stint_laps, base_time, temp, race_start_lap, v):
         
     temp_coef = v[0]
     fuel_burn = v[1]
-    warmup_penalty = v[3] 
+    warmup_penalty = v[3]
     
     if tire_name == 'SOFT':   offset, deg, cliff = v[4], v[5], 10
     elif tire_name == 'MEDIUM': offset, deg, cliff = v[6], v[7], 20
@@ -52,7 +51,7 @@ def calc_stint_time(tire_name, stint_laps, base_time, temp, race_start_lap, v):
         if tire_age > cliff:
             current_lap += actual_deg * (tire_age - cliff)
             
-        total_stint_time += round(current_lap, 3) 
+        total_stint_time += round(current_lap, 3)
         
     return total_stint_time
 
@@ -62,7 +61,7 @@ def simulate_race(race, v):
     temp = config["track_temp"]
     plt = config["pit_lane_time"]
     
-    grid_penalty_sec = v[2] 
+    grid_penalty_sec = v[2]
 
     times = {}
     for pos_key, strategy in race["strategies"].items():
@@ -85,7 +84,9 @@ def simulate_race(race, v):
         final_laps = config["total_laps"] - curr_lap + 1
         total += calc_stint_time(curr_tire, final_laps, base, temp, curr_lap, v)
 
+        # Microscopic grid penalty to break identical ties
         total += (grid_pos - 1) * grid_penalty_sec
+
         times[driver] = total
 
     return times
@@ -117,8 +118,6 @@ def callback_fn(xk, convergence, races):
             
     print(f"Current Gen: {perfect}/100")
     
-    # LIVE CHECKPOINTING! 
-    # If it finds a new high score, it prints the dictionary instantly.
     if perfect > BEST_SCORE:
         BEST_SCORE = perfect
         print("\n" + "🔥" * 20)
@@ -138,20 +137,23 @@ def callback_fn(xk, convergence, races):
 
 def main():
     races = load_final_exam()
-    print("Firing up the Save-State Fast Tuner...")
+    print("Firing up the 46% Micro-Tuner...")
 
+    # Tight bounds clamped directly around your 46% victory
     bounds = [
-        (0.08, 0.15),   # 0: temp_coef
-        (-0.005, 0.0),  # 1: fuel_burn
-        (0.0, 0.300),   # 2: grid_penalty
-        (0.0, 3.0),     # 3: warmup_penalty
+        (0.100, 0.115),   # 0: temp_coef (Around 0.106)
+        (-0.004, -0.002), # 1: fuel_burn (Around -0.003)
+        (0.0, 0.001),     # 2: grid_penalty (Microscopic tiebreaker)
+        (2.0, 3.2),       # 3: warmup_penalty (Around 2.6)
         
-        (2.8, 3.2),     # 4: SOFT offset
-        (0.35, 0.45),   # 5: SOFT deg
-        (3.8, 4.2),     # 6: MEDIUM offset
-        (0.18, 0.25),   # 7: MEDIUM deg
-        (4.5, 4.9),     # 8: HARD offset
-        (0.08, 0.15),   # 9: HARD deg
+        (2.8, 3.1),       # 4: SOFT offset (Around 2.96)
+        (0.40, 0.48),     # 5: SOFT deg (Around 0.43)
+        
+        (3.8, 4.3),       # 6: MEDIUM offset (Around 4.03)
+        (0.18, 0.28),     # 7: MEDIUM deg (Around 0.22)
+        
+        (4.5, 5.2),       # 8: HARD offset (Around 4.88)
+        (0.08, 0.15),     # 9: HARD deg (Around 0.11)
     ]
 
     try:
@@ -159,12 +161,12 @@ def main():
             loss_function,
             bounds,
             args=(races,),
-            maxiter=500,
-            popsize=5,  # REDUCED TO RUN 3X FASTER
+            maxiter=1000,
+            popsize=10, 
             mutation=(0.5, 1.0),
             recombination=0.8,
             seed=42,
-            disp=False, # Turned off the f(x) spam to keep the console clean
+            disp=False, 
             workers=-1,
             callback=lambda xk, convergence: callback_fn(xk, convergence, races),
         )
