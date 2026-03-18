@@ -1,14 +1,6 @@
-#!/usr/bin/env python3
-"""
-Box Box Box - F1 Race Simulator (Optimized 63% Version)
-"""
-
 import json
 import sys
 
-# ==============================================================================
-# CONFIGURATION 
-# ==============================================================================
 
 # High-Precision Optimized Parameters
 TIRE_OFFSET = {
@@ -39,9 +31,6 @@ WEAR_POWER = 0.9535525170945268
 def get_temp_multiplier(temp):
     return 1.0 + (temp - TEMP_ORIGIN) * TEMP_MULT
 
-# ==============================================================================
-# LAP TIME PREDICTION
-# ==============================================================================
 
 def calculate_lap_time(base_lap_time, tire_compound, tire_age, temperature):
     """
@@ -56,10 +45,6 @@ def calculate_lap_time(base_lap_time, tire_compound, tire_age, temperature):
     degradation = DEGRADATION_RATE[tire_compound] * wear_effect * temp_effect
     lap_time = base_speed + degradation
     return lap_time
-
-# ==============================================================================
-# RACE SIMULATION
-# ==============================================================================
 
 def simulate_driver(driver_id, strategy, race_config):
     total_laps = race_config['total_laps']
@@ -98,9 +83,6 @@ def simulate_race(race_config, strategies):
     results.sort(key=lambda x: (x[1], x[2]))
     return [driver_id for driver_id, _, _ in results][:20]
 
-# ==============================================================================
-# MAIN PROGRAM
-# ==============================================================================
 
 def main():
     try:
