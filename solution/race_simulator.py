@@ -1,112 +1,113 @@
 import json
 import sys
 
-PARAMS = {
-    "SOFT": {
-        "offset": 2.958962002059359, 
-        "cliff": 10, 
-        "deg": 0.3938052242423563
-    }, 
-    "MEDIUM": {
-        "offset": 3.9262504324101357, 
-        "cliff": 20, 
-        "deg": 0.2005977212786465
-    }, 
-    "HARD": {
-        "offset": 4.7244861975727845, 
-        "cliff": 30, 
-        "deg": 0.10319025698674321
-    }, 
-    "temp_coef": 0.112095, 
-    "evol": 0.00010257806706596489
+
+# High-Precision Optimized Parameters
+TIRE_OFFSET = {
+    'SOFT': -1.0164688925415162,
+    'MEDIUM': 0.0,
+    'HARD': 0.8083559033446268
 }
-def calc_stint_time(tire_name, laps, base_time, temp, start_lap):
+
+DEGRADATION_RATE = {
+    'SOFT': 1.7721437781975329,
+    'MEDIUM': 0.9020411535879727,
+    'HARD': 0.45965552833668016
+}
+
+FLAT_PERIOD = {
+    'SOFT': 10.129535541186053,
+    'MEDIUM': 20.077035296627418,
+    'HARD': 30.07214783623455
+}
+
+# Thermal Sensitivity
+TEMP_ORIGIN = 25.32291967111835
+TEMP_MULT = 0.015758278987604856
+
+# Power-Law Wear Exponent
+WEAR_POWER = 0.9535525170945268
+
+def get_temp_multiplier(temp):
+    return 1.0 + (temp - TEMP_ORIGIN) * TEMP_MULT
+
+
+def calculate_lap_time(base_lap_time, tire_compound, tire_age, temperature):
     """
-    Iterates through each lap to account for the linear fuel burn (evol).
+    Calculate lap time using power-law degradation
     """
-    if laps <= 0:
-        return 0.0, 0.0
-        
-    tire = PARAMS[tire_name]
-    actual_deg = tire["deg"] * (1.0 + temp * PARAMS["temp_coef"])
-    total_stint_time = 0.0
-    last_lap_time = 0.0
-    
-    for i in range(laps):
-        # Current absolute lap in the race (1, 2, 3...)
-        current_abs_lap = start_lap + i
-        
-        # Physics: Base + Offset - (Fuel Burn * Current Lap)
-        lap_time = base_time + tire["offset"] - (PARAMS['evol'] * current_abs_lap)
-        
-        # Add degradation if beyond the cliff
-        laps_on_this_tire = i + 1
-        if laps_on_this_tire > tire["cliff"]:
-            lap_time += (laps_on_this_tire - tire["cliff"]) * actual_deg
-            
-        total_stint_time += lap_time
-        last_lap_time = lap_time
-        
-    return total_stint_time, last_lap_time
+    effective_age = max(0.0, tire_age - FLAT_PERIOD[tire_compound])
+    wear_effect = (effective_age ** WEAR_POWER)
 
-def main():
-    # Read STDIN
-    input_data = sys.stdin.read()
-    if not input_data.strip():
-        return
+    base_speed = base_lap_time + TIRE_OFFSET[tire_compound]
+    temp_effect = get_temp_multiplier(temperature)
 
-    try:
-        test_case = json.loads(input_data)
-    except Exception:
-        sys.exit(1)
+    degradation = DEGRADATION_RATE[tire_compound] * wear_effect * temp_effect
+    lap_time = base_speed + degradation
+    return lap_time
 
-    config = test_case['race_config']
-    base = config['base_lap_time']
-    temp = config['track_temp']
-    pit_time = config['pit_lane_time']
+def simulate_driver(driver_id, strategy, race_config):
+    total_laps = race_config['total_laps']
+    base_lap_time = race_config['base_lap_time']
+    pit_lane_time = race_config['pit_lane_time']
+    temperature = race_config['track_temp']
 
+    total_time = 0.0
+    current_tire = strategy['starting_tire']
+    tire_age = 0
+    pit_stops = {ps['lap']: ps['to_tire'] for ps in strategy['pit_stops']}
+
+    for lap in range(1, total_laps + 1):
+        tire_age += 1
+
+        lap_time = calculate_lap_time(base_lap_time, current_tire, tire_age, temperature)
+        total_time += lap_time
+
+        if lap in pit_stops:
+            total_time += pit_lane_time
+            current_tire = pit_stops[lap]
+            tire_age = 0
+
+    return total_time
+
+def simulate_race(race_config, strategies):
     results = []
 
-    for strategy in test_case['strategies'].values():
-        driver = strategy['driver_id']
-        pit_stops = sorted(strategy.get('pit_stops', []), key=lambda x: int(x['lap']))
+    for position_key, strategy in strategies.items():
+        driver_id = strategy['driver_id']
+        grid_pos = int(position_key.replace('pos', ''))
+        total_time = simulate_driver(driver_id, strategy, race_config)
+        results.append((driver_id, total_time, grid_pos))
 
-        total = 0.0
-        curr_lap = 1
-        curr_tire = strategy['starting_tire']
-        final_lap_val = 0.0
+    # Sort by total time (primary) and grid position (tie-breaker Regulation 2.08)
+    results.sort(key=lambda x: (x[1], x[2]))
+    return [driver_id for driver_id, _, _ in results][:20]
 
-        # Calculate each stint + pit stop
-        for stop in pit_stops:
-            stint_laps = stop['lap'] - curr_lap + 1
-            s_time, l_lap = calc_stint_time(curr_tire, stint_laps, base, temp, curr_lap)
-            
-            total += s_time
-            total += pit_time
-            
-            final_lap_val = l_lap
-            curr_lap = stop['lap'] + 1
-            curr_tire = stop['to_tire']
 
-        # Final stint to the flag
-        final_laps = config['total_laps'] - curr_lap + 1
-        s_time, l_lap = calc_stint_time(curr_tire, final_laps, base, temp, curr_lap)
-        
-        total += s_time
-        final_lap_val = l_lap
+def main():
+    try:
+        input_data = sys.stdin.read()
+        if not input_data:
+            return
+        data = json.loads(input_data)
+    except (json.JSONDecodeError, EOFError):
+        return
 
-        # Store for sorting: (Total Time, Last Lap Tie-Breaker, Driver ID)
-        results.append((total, final_lap_val, driver))
+    races = data if isinstance(data, list) else [data]
 
-    # Sort by total time, then last lap time, then driver ID
-    results.sort(key=lambda x: (x[0], x[1], x[2]))
+    outputs = []
+    for race in races:
+        race_id = race['race_id']
+        positions = simulate_race(race['race_config'], race['strategies'])
+        outputs.append({
+            'race_id': race_id,
+            'finishing_positions': positions
+        })
 
-    output = {
-        'race_id': test_case['race_id'],
-        'finishing_positions': [r[2] for r in results]
-    }
-
-    print(json.dumps(output))
+    if isinstance(data, dict):
+        print(json.dumps(outputs[0]))
+    else:
+        print(json.dumps(outputs))
 
 if __name__ == '__main__':
     main()
